@@ -18,7 +18,10 @@ function toggleExportFields() {
     const remapTablespaceGroup = document.getElementById('remapTablespaceGroup');
     const fullOption = document.getElementById('fullOption');
     
+    const rdsOracleGroup = document.getElementById('rdsOracleGroup');
+    
     filesizeGroup.style.display = operation === 'export' ? 'block' : 'none';
+    rdsOracleGroup.style.display = operation === 'export' ? 'block' : 'none';
     remapSchemaGroup.style.display = operation === 'import' ? 'block' : 'none';
     remapTablespaceGroup.style.display = operation === 'import' ? 'block' : 'none';
     fullOption.textContent = operation === 'export' ? 'Full Database' : 'Full Dumpfile';
@@ -70,9 +73,7 @@ function parseCommand(cmdLine) {
     const connMatch = cmdLine.match(/^([^\s=]+)(\s|$)/);
     if (connMatch && !connMatch[1].includes('=')) {
         const username = connMatch[1].split('/')[0].split('@')[0];
-        if (username && !params.schemas) {
-            params.schemas = username.toUpperCase();
-        }
+        params._username = username.toUpperCase();
         cmdLine = cmdLine.substring(connMatch[0].length).trim();
     }
     
@@ -100,9 +101,14 @@ function parseCommand(cmdLine) {
 // Determine job mode
 function determineJobMode(params) {
     if (params.full === 'y' || params.full === 'yes') return 'FULL';
-    if (params.schemas) return 'SCHEMA';
     if (params.tables) return 'TABLE';
     if (params.tablespaces) return 'TABLESPACE';
+    if (params.schemas) return 'SCHEMA';
+    // If no specific mode, use username as schema for SCHEMA mode
+    if (params._username && !params.tables && !params.tablespaces) {
+        params.schemas = params._username;
+        return 'SCHEMA';
+    }
     return 'SCHEMA';
 }
 
@@ -137,6 +143,7 @@ function generateDirect() {
     const parallel = document.getElementById('parallel').value;
     const filesize = document.getElementById('filesize').value;
     const useUniqueName = document.getElementById('useUniqueName').checked;
+    const isRdsOracle = document.getElementById('isRdsOracle').checked;
     const remapSchema = document.getElementById('remapSchema').value;
     const remapTablespace = document.getElementById('remapTablespace').value;
     
@@ -151,6 +158,7 @@ function generateDirect() {
         parallel: parallel,
         filesize: filesize,
         useUniqueName: useUniqueName,
+        isRdsOracle: isRdsOracle,
         fromCommandLine: false // Flag to indicate direct generator
     };
     
@@ -517,6 +525,49 @@ BEGIN`;
         script += `    name   => 'NETWORK_LINK',\n`;
         script += `    value  => '${params.network_link.toUpperCase()}'\n`;
         script += `  );\n\n`;
+    }
+    
+    // Add RDS Oracle filter (export only, direct generator only)
+    if (operation === 'EXPORT' && !fromCmdLine && params.isRdsOracle) {
+        script += `  -- Exclude RDS Oracle system objects\n`;
+        script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'EXCLUDE_NAME_EXPR',\n`;
+        script += `    value  => q'[IN (SELECT NAME FROM SYS.OBJ$ \n`;
+        script += `               WHERE TYPE# IN (66,67,74,79,59,62,46) \n`;
+        script += `               AND OWNER# IN \n`;
+        script += `                 (SELECT USER# FROM SYS.USER$ \n`;
+        script += `                  WHERE NAME IN ('RDSADMIN','SYS','SYSTEM','RDS_DATAGUARD','RDSSEC')\n`;
+        script += `                 )\n`;
+        script += `              )\n`;
+        script += `    ]',\n`;
+        script += `    object_path => 'PROCOBJ'\n`;
+        script += `  );\n\n`;
+    }
+    
+    // Add query filter
+    if (params.query) {
+        // Parse query format: table_name:"WHERE clause"
+        const queries = params.query.split(',');
+        queries.forEach(q => {
+            const colonIndex = q.indexOf(':');
+            if (colonIndex > 0) {
+                const tableName = q.substring(0, colonIndex).trim();
+                let whereClause = q.substring(colonIndex + 1).trim();
+                // Remove quotes if present
+                if ((whereClause.startsWith('"') && whereClause.endsWith('"')) || 
+                    (whereClause.startsWith("'") && whereClause.endsWith("'"))) {
+                    whereClause = whereClause.slice(1, -1);
+                }
+                script += `  -- Set query filter for ${tableName}\n`;
+                script += `  DBMS_DATAPUMP.DATA_FILTER(\n`;
+                script += `    handle => ${handleVar},\n`;
+                script += `    name   => 'SUBQUERY',\n`;
+                script += `    value  => '${whereClause}',\n`;
+                script += `    table_name => '${tableName.toUpperCase()}'\n`;
+                script += `  );\n\n`;
+            }
+        });
     }
     
     // Start the job

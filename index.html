@@ -70,6 +70,11 @@
                     <label>Max File Size (GB):</label>
                     <input type="number" id="filesize" value="100" min="1">
                 </div>
+                <div class="form-group" id="rdsOracleGroup">
+                    <label style="font-weight: normal;">
+                        <input type="checkbox" id="isRdsOracle"> Source is RDS Oracle (excludes RDS system objects)
+                    </label>
+                </div>
                 <div class="form-group" id="remapSchemaGroup" style="display:none;">
                     <label>Remap Schema (source:target):</label>
                     <input type="text" id="remapSchema" placeholder="SCOTT:SCOTT_DEV or leave empty">
