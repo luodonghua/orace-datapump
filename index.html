@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oracle Data Pump to DBMS_DATAPUMP Converter</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Oracle Data Pump Converter</h1>
+            <p>Convert command line Data Pump syntax to DBMS_DATAPUMP API PL/SQL scripts</p>
+            <a href="examples.html" style="color: white; text-decoration: underline;">View Examples →</a>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="showTab('cmdline')">Command Line Converter</button>
+            <button class="tab-button" onclick="showTab('direct')">Direct Generator</button>
+        </div>
+
+        <div id="cmdline" class="tab-content active">
+            <h2>Command Line to API Converter</h2>
+            <div class="input-section">
+                <label for="cmdInput">Enter your expdp/impdp command:</label>
+                <textarea id="cmdInput" placeholder="expdp scott/tiger@orcl directory=DATA_PUMP_DIR dumpfile=scott.dmp schemas=scott"></textarea>
+                <button onclick="convertCommand()">Convert to PL/SQL</button>
+            </div>
+        </div>
+
+        <div id="direct" class="tab-content">
+            <h2>Direct PL/SQL Generator</h2>
+            <div class="form-section">
+                <div class="form-group">
+                    <label>Operation Type:</label>
+                    <select id="operation">
+                        <option value="export">Export</option>
+                        <option value="import">Import</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Job Mode:</label>
+                    <select id="jobMode">
+                        <option value="SCHEMA">Schema</option>
+                        <option value="TABLE">Table</option>
+                        <option value="FULL">Full Database</option>
+                        <option value="TABLESPACE">Tablespace</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Directory Object:</label>
+                    <input type="text" id="directory" placeholder="DATA_PUMP_DIR">
+                </div>
+                <div class="form-group">
+                    <label>Dump File:</label>
+                    <input type="text" id="dumpfile" placeholder="export.dmp">
+                </div>
+                <div class="form-group">
+                    <label>Schema/Table Names:</label>
+                    <input type="text" id="objects" placeholder="SCOTT,HR or SCOTT.EMP,SCOTT.DEPT">
+                </div>
+                <button onclick="generateDirect()">Generate PL/SQL</button>
+            </div>
+        </div>
+
+        <div class="output-section">
+            <h3>Generated PL/SQL Script:</h3>
+            <textarea id="output" readonly></textarea>
+            <button onclick="copyToClipboard()">Copy to Clipboard</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

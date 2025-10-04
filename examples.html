@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Examples - Oracle Data Pump Converter</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .example-card {
+            background: white;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .example-card h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        .example-code {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+        .nav-link {
+            display: inline-block;
+            margin: 20px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .nav-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Oracle Data Pump Examples</h1>
+            <p>Common use cases and their PL/SQL equivalents</p>
+            <a href="index.html" class="nav-link">← Back to Converter</a>
+        </header>
+
+        <div style="padding: 30px;">
+            <div class="example-card">
+                <h3>Example 1: Simple Schema Export</h3>
+                <p><strong>Use Case:</strong> Export a single schema</p>
+                <div class="example-code">
+expdp scott/tiger directory=DATA_PUMP_DIR dumpfile=scott.dmp schemas=scott
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>directory: Directory object for files</li>
+                    <li>dumpfile: Output dump file name</li>
+                    <li>schemas: Schema to export</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 2: Multiple Schemas with Compression</h3>
+                <p><strong>Use Case:</strong> Export multiple schemas with compression</p>
+                <div class="example-code">
+expdp system/password directory=DATA_PUMP_DIR dumpfile=multi_schema.dmp 
+schemas=scott,hr,oe compression=all parallel=4
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>schemas: Multiple schemas separated by comma</li>
+                    <li>compression: Compression type (ALL, DATA_ONLY, METADATA_ONLY)</li>
+                    <li>parallel: Number of parallel processes</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 3: Table Export with Query Filter</h3>
+                <p><strong>Use Case:</strong> Export specific tables with data filter</p>
+                <div class="example-code">
+expdp scott/tiger directory=DATA_PUMP_DIR dumpfile=emp_dept.dmp 
+tables=scott.emp,scott.dept query=scott.emp:"WHERE deptno=10"
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>tables: Specific tables to export</li>
+                    <li>query: WHERE clause to filter data</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 4: Schema Import with Remap</h3>
+                <p><strong>Use Case:</strong> Import schema to different schema name</p>
+                <div class="example-code">
+impdp system/password directory=DATA_PUMP_DIR dumpfile=scott.dmp 
+remap_schema=scott:scott_dev table_exists_action=replace
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>remap_schema: Map source schema to target schema</li>
+                    <li>table_exists_action: Action when table exists (SKIP/APPEND/TRUNCATE/REPLACE)</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 5: Metadata Only Export</h3>
+                <p><strong>Use Case:</strong> Export only DDL without data</p>
+                <div class="example-code">
+expdp scott/tiger directory=DATA_PUMP_DIR dumpfile=scott_ddl.dmp 
+schemas=scott content=metadata_only
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>content: METADATA_ONLY exports only DDL</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 6: Full Database Export</h3>
+                <p><strong>Use Case:</strong> Export entire database</p>
+                <div class="example-code">
+expdp system/password directory=DATA_PUMP_DIR dumpfile=full_db_%U.dmp 
+full=y parallel=8 filesize=2G
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>full: Full database export</li>
+                    <li>%U: Placeholder for multiple files</li>
+                    <li>filesize: Maximum size per file</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 7: Exclude/Include Objects</h3>
+                <p><strong>Use Case:</strong> Export schema excluding statistics</p>
+                <div class="example-code">
+expdp scott/tiger directory=DATA_PUMP_DIR dumpfile=scott.dmp 
+schemas=scott exclude=statistics
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>exclude: Exclude specific object types</li>
+                    <li>include: Include only specific object types</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 8: Tablespace Export</h3>
+                <p><strong>Use Case:</strong> Export all objects in a tablespace</p>
+                <div class="example-code">
+expdp system/password directory=DATA_PUMP_DIR dumpfile=users_ts.dmp 
+tablespaces=users
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>tablespaces: Export all objects in specified tablespace(s)</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 9: Import with Tablespace Remap</h3>
+                <p><strong>Use Case:</strong> Import to different tablespace</p>
+                <div class="example-code">
+impdp system/password directory=DATA_PUMP_DIR dumpfile=scott.dmp 
+remap_tablespace=users:users2 remap_schema=scott:scott_test
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>remap_tablespace: Map source tablespace to target</li>
+                    <li>remap_schema: Can combine with schema remap</li>
+                </ul>
+            </div>
+
+            <div class="example-card">
+                <h3>Example 10: Network Import (Direct Database Link)</h3>
+                <p><strong>Use Case:</strong> Import directly from remote database</p>
+                <div class="example-code">
+impdp system/password directory=DATA_PUMP_DIR network_link=source_db 
+schemas=scott remap_schema=scott:scott_copy
+                </div>
+                <p><strong>Key Parameters:</strong></p>
+                <ul>
+                    <li>network_link: Database link to source database</li>
+                    <li>No dumpfile needed - direct transfer</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
