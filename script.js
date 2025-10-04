@@ -10,6 +10,20 @@ function showTab(tabName) {
     event.target.classList.add('active');
 }
 
+// Toggle export-only fields
+function toggleExportFields() {
+    const operation = document.getElementById('operation').value;
+    const filesizeGroup = document.getElementById('filesizeGroup');
+    const remapSchemaGroup = document.getElementById('remapSchemaGroup');
+    const remapTablespaceGroup = document.getElementById('remapTablespaceGroup');
+    const fullOption = document.getElementById('fullOption');
+    
+    filesizeGroup.style.display = operation === 'export' ? 'block' : 'none';
+    remapSchemaGroup.style.display = operation === 'import' ? 'block' : 'none';
+    remapTablespaceGroup.style.display = operation === 'import' ? 'block' : 'none';
+    fullOption.textContent = operation === 'export' ? 'Full Database' : 'Full Dumpfile';
+}
+
 // Command line parameter mappings
 const parameterMappings = {
     'directory': 'directory',
@@ -53,27 +67,32 @@ function parseCommand(cmdLine) {
     }
     
     // Extract username/password@connection (optional for API)
-    const connMatch = cmdLine.match(/^(\S+?)(\s|$)/);
-    if (connMatch) {
+    const connMatch = cmdLine.match(/^([^\s=]+)(\s|$)/);
+    if (connMatch && !connMatch[1].includes('=')) {
+        const username = connMatch[1].split('/')[0].split('@')[0];
+        if (username && !params.schemas) {
+            params.schemas = username.toUpperCase();
+        }
         cmdLine = cmdLine.substring(connMatch[0].length).trim();
     }
     
-    // Parse parameters
-    const paramRegex = /(\w+)=([^\s]+(?:\s+[^\s=]+(?!=))*)/g;
-    let match;
-    
-    while ((match = paramRegex.exec(cmdLine)) !== null) {
-        const key = match[1].toLowerCase();
-        let value = match[2].trim();
-        
-        // Remove quotes if present
-        if ((value.startsWith('"') && value.endsWith('"')) || 
-            (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1);
+    // Parse parameters - improved regex to handle values properly
+    const parts = cmdLine.split(/\s+(?=[A-Z_]+=)/i);
+    parts.forEach(part => {
+        const eqIndex = part.indexOf('=');
+        if (eqIndex > 0) {
+            const key = part.substring(0, eqIndex).toLowerCase();
+            let value = part.substring(eqIndex + 1).trim();
+            
+            // Remove quotes if present
+            if ((value.startsWith('"') && value.endsWith('"')) || 
+                (value.startsWith("'") && value.endsWith("'"))) {
+                value = value.slice(1, -1);
+            }
+            
+            params[key] = value;
         }
-        
-        params[key] = value;
-    }
+    });
     
     return params;
 }
@@ -99,8 +118,7 @@ function convertCommand() {
     try {
         const params = parseCommand(cmdInput);
         const jobMode = determineJobMode(params);
-        if (!params.parallel) params.parallel = '1';
-        if (!params.filesize) params.filesize = '100';
+        params.fromCommandLine = true; // Flag to indicate command line source
         const result = generatePLSQL(params.operation, jobMode, params);
         document.getElementById('output').innerHTML = highlightSQL(result.script);
         document.getElementById('monitor').innerHTML = highlightSQL(result.monitor);
@@ -119,6 +137,8 @@ function generateDirect() {
     const parallel = document.getElementById('parallel').value;
     const filesize = document.getElementById('filesize').value;
     const useUniqueName = document.getElementById('useUniqueName').checked;
+    const remapSchema = document.getElementById('remapSchema').value;
+    const remapTablespace = document.getElementById('remapTablespace').value;
     
     if (!directory || !dumpfile) {
         alert('Please fill in required fields: Directory and Dump File');
@@ -130,7 +150,8 @@ function generateDirect() {
         dumpfile: dumpfile,
         parallel: parallel,
         filesize: filesize,
-        useUniqueName: useUniqueName
+        useUniqueName: useUniqueName,
+        fromCommandLine: false // Flag to indicate direct generator
     };
     
     if (objects) {
@@ -141,6 +162,14 @@ function generateDirect() {
         } else if (jobMode === 'TABLESPACE') {
             params.tablespaces = objects;
         }
+    }
+    
+    if (remapSchema && remapSchema.trim()) {
+        params.remap_schema = remapSchema;
+    }
+    
+    if (remapTablespace && remapTablespace.trim()) {
+        params.remap_tablespace = remapTablespace;
     }
     
     const result = generatePLSQL(operation, jobMode, params);
@@ -205,19 +234,35 @@ function highlightSQL(code) {
 // Core PL/SQL generation function
 function generatePLSQL(operation, jobMode, params) {
     const timestamp = getOracleTimestamp();
+    const fromCmdLine = params.fromCommandLine;
     const objectName = (params.schemas || params.tables?.split(',')[0]?.split('.')[0] || params.tablespaces || 'DB').replace(/[^A-Z0-9]/gi, '').substring(0, 10);
-    const jobName = `${operation}_${objectName}_${timestamp}`.substring(0, 30).toUpperCase();
+    const jobName = params.job_name || `${operation}_${objectName}_${timestamp}`.substring(0, 30).toUpperCase();
     const handleVar = 'h1';
     const scnVar = 'v_scn';
     
     let script = `DECLARE
-  ${handleVar} NUMBER;
-  ${scnVar} NUMBER;
-BEGIN
+  ${handleVar} NUMBER;`;
+    
+    // Only add SCN for export and if not from command line OR if command line doesn't specify encryption
+    if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
+        script += `
+  ${scnVar} NUMBER;`;
+    }
+    
+    script += `
+BEGIN`;
+    
+    // Only add SCN logic for export and if not from command line OR if command line doesn't specify encryption
+    if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
+        script += `
   -- Get current SCN for consistent export
   SELECT CURRENT_SCN INTO ${scnVar} FROM V$DATABASE;
   DBMS_OUTPUT.PUT_LINE('Using SCN: ' || ${scnVar});
-  
+  -- To use a specific SCN instead: ${scnVar} := 12345678;
+`;
+    }
+    
+    script += `
   -- Create Data Pump job
   ${handleVar} := DBMS_DATAPUMP.OPEN(
     operation => '${operation}',
@@ -230,7 +275,7 @@ BEGIN
     // Add file specifications
     if (params.dumpfile) {
         let dumpfile = params.dumpfile;
-        if (params.useUniqueName && !dumpfile.includes('%U')) {
+        if (!fromCmdLine && params.useUniqueName && !dumpfile.includes('%U')) {
             dumpfile = dumpfile.replace('.dmp', '%U.dmp');
         }
         const dumpfiles = dumpfile.split(',');
@@ -245,16 +290,18 @@ BEGIN
         });
     }
     
-    // Add log file with timestamp
-    const baseLogName = (params.logfile || params.dumpfile?.replace('.dmp', '') || 'datapump').replace('.log', '');
-    const logfile = `${baseLogName}_${timestamp}.log`;
-    script += `  -- Add log file\n`;
-    script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
-    script += `    handle    => ${handleVar},\n`;
-    script += `    filename  => '${logfile}',\n`;
-    script += `    directory => '${params.directory || 'DATA_PUMP_DIR'}',\n`;
-    script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_LOG_FILE\n`;
-    script += `  );\n\n`;
+    // Add log file
+    if (params.logfile || !fromCmdLine) {
+        const baseLogName = (params.logfile || params.dumpfile?.replace('.dmp', '') || 'datapump').replace('.log', '');
+        const logfile = fromCmdLine && params.logfile ? params.logfile : `${baseLogName}_${timestamp}.log`;
+        script += `  -- Add log file\n`;
+        script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
+        script += `    handle    => ${handleVar},\n`;
+        script += `    filename  => '${logfile}',\n`;
+        script += `    directory => '${params.directory || 'DATA_PUMP_DIR'}',\n`;
+        script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_LOG_FILE\n`;
+        script += `  );\n\n`;
+    }
     
     // Add metadata filters based on job mode
     if (jobMode === 'SCHEMA' && params.schemas) {
@@ -264,7 +311,7 @@ BEGIN
             script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
             script += `    handle => ${handleVar},\n`;
             script += `    name   => 'SCHEMA_EXPR',\n`;
-            script += `    value  => 'IN (''${schema.trim().toUpperCase()}'')';\n`;
+            script += `    value  => 'IN (''${schema.trim().toUpperCase()}'')'\n`;
             script += `  );\n\n`;
         });
     }
@@ -276,7 +323,7 @@ BEGIN
             script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
             script += `    handle => ${handleVar},\n`;
             script += `    name   => 'NAME_EXPR',\n`;
-            script += `    value  => 'IN (''${table.trim().toUpperCase()}'')';\n`;
+            script += `    value  => 'IN (''${table.trim().toUpperCase()}'')'\n`;
             script += `  );\n\n`;
         });
     }
@@ -288,7 +335,7 @@ BEGIN
             script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
             script += `    handle => ${handleVar},\n`;
             script += `    name   => 'TABLESPACE_EXPR',\n`;
-            script += `    value  => 'IN (''${ts.trim().toUpperCase()}'')';\n`;
+            script += `    value  => 'IN (''${ts.trim().toUpperCase()}'')'\n`;
             script += `  );\n\n`;
         });
     }
@@ -327,16 +374,20 @@ BEGIN
         });
     }
     
-    // Add parallel (always set, default 1)
-    const parallelDegree = params.parallel || '1';
-    script += `  -- Set parallel degree\n`;
-    script += `  DBMS_DATAPUMP.SET_PARALLEL(\n`;
-    script += `    handle => ${handleVar},\n`;
-    script += `    degree => ${parallelDegree}\n`;
-    script += `  );\n\n`;
+    // Add parallel - only if specified in command line or from direct generator
+    if (params.parallel && (fromCmdLine || !fromCmdLine)) {
+        const parallelDegree = params.parallel || '1';
+        if (fromCmdLine && params.parallel || !fromCmdLine) {
+            script += `  -- Set parallel degree\n`;
+            script += `  DBMS_DATAPUMP.SET_PARALLEL(\n`;
+            script += `    handle => ${handleVar},\n`;
+            script += `    degree => ${parallelDegree}\n`;
+            script += `  );\n\n`;
+        }
+    }
     
-    // Add FLASHBACK_SCN for export
-    if (operation === 'EXPORT') {
+    // Add FLASHBACK_SCN for export - only if not from command line or no encryption
+    if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
         script += `  -- Set flashback SCN for consistent export\n`;
         script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
         script += `    handle => ${handleVar},\n`;
@@ -345,14 +396,53 @@ BEGIN
         script += `  );\n\n`;
     }
     
-    // Add filesize for export
-    if (operation === 'EXPORT' && params.filesize) {
-        const filesizeBytes = parseInt(params.filesize) * 1024 * 1024 * 1024; // Convert GB to bytes
-        script += `  -- Set maximum file size\n`;
+    // Add filesize - only if specified in command line or from direct generator
+    if (operation === 'EXPORT' && params.filesize && (fromCmdLine || !fromCmdLine)) {
+        if (fromCmdLine && params.filesize || !fromCmdLine) {
+            const filesizeBytes = parseInt(params.filesize) * 1024 * 1024 * 1024;
+            script += `  -- Set maximum file size\n`;
+            script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+            script += `    handle => ${handleVar},\n`;
+            script += `    name   => 'FILESIZE',\n`;
+            script += `    value  => '${filesizeBytes}'\n`;
+            script += `  );\n\n`;
+        }
+    }
+    
+    // Add encryption parameters if specified
+    if (params.encryption) {
+        script += `  -- Set encryption\n`;
         script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
         script += `    handle => ${handleVar},\n`;
-        script += `    name   => 'FILESIZE',\n`;
-        script += `    value  => '${filesizeBytes}'\n`;
+        script += `    name   => 'ENCRYPTION',\n`;
+        script += `    value  => '${params.encryption.toUpperCase()}'\n`;
+        script += `  );\n\n`;
+    }
+    
+    if (params.encryption_password) {
+        script += `  -- Set encryption password\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'ENCRYPTION_PASSWORD',\n`;
+        script += `    value  => '${params.encryption_password}'\n`;
+        script += `  );\n\n`;
+    }
+    
+    if (params.encryption_algorithm) {
+        script += `  -- Set encryption algorithm\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'ENCRYPTION_ALGORITHM',\n`;
+        script += `    value  => '${params.encryption_algorithm.toUpperCase()}'\n`;
+        script += `  );\n\n`;
+    }
+    
+    if (params.encryption_mode) {
+        script += `  -- Set encryption mode\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'ENCRYPTION_MODE',\n`;
+        script += `    value  => '${params.encryption_mode.toUpperCase()}'\n`;
         script += `  );\n\n`;
     }
     
@@ -423,10 +513,13 @@ BEGIN
     script += `  -- Start the Data Pump job\n`;
     script += `  DBMS_DATAPUMP.START_JOB(handle => ${handleVar});\n\n`;
     
+    const logfileForOutput = params.logfile || (params.dumpfile ? `${params.dumpfile.replace('.dmp', '')}_${timestamp}.log` : `datapump_${timestamp}.log`);
     script += `  DBMS_OUTPUT.PUT_LINE('========================================');\n`;
     script += `  DBMS_OUTPUT.PUT_LINE('Job Name: ${jobName}');\n`;
-    script += `  DBMS_OUTPUT.PUT_LINE('SCN: ' || ${scnVar});\n`;
-    script += `  DBMS_OUTPUT.PUT_LINE('Log File: ${logfile}');\n`;
+    if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
+        script += `  DBMS_OUTPUT.PUT_LINE('SCN: ' || ${scnVar});\n`;
+    }
+    script += `  DBMS_OUTPUT.PUT_LINE('Log File: ${logfileForOutput}');\n`;
     script += `  DBMS_OUTPUT.PUT_LINE('Job started successfully');\n`;
     script += `  DBMS_OUTPUT.PUT_LINE('Use monitoring script to check progress');\n`;
     script += `  DBMS_OUTPUT.PUT_LINE('========================================');\n\n`;

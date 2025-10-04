@@ -33,7 +33,7 @@
             <div class="form-section">
                 <div class="form-group">
                     <label>Operation Type:</label>
-                    <select id="operation">
+                    <select id="operation" onchange="toggleExportFields()">
                         <option value="export">Export</option>
                         <option value="import">Import</option>
                     </select>
@@ -43,7 +43,7 @@
                     <select id="jobMode">
                         <option value="SCHEMA">Schema</option>
                         <option value="TABLE">Table</option>
-                        <option value="FULL">Full Database</option>
+                        <option value="FULL" id="fullOption">Full Database</option>
                         <option value="TABLESPACE">Tablespace</option>
                     </select>
                 </div>
@@ -66,9 +66,17 @@
                     <label>Parallel Degree:</label>
                     <input type="number" id="parallel" value="1" min="1">
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="filesizeGroup">
                     <label>Max File Size (GB):</label>
                     <input type="number" id="filesize" value="100" min="1">
+                </div>
+                <div class="form-group" id="remapSchemaGroup" style="display:none;">
+                    <label>Remap Schema (source:target):</label>
+                    <input type="text" id="remapSchema" placeholder="SCOTT:SCOTT_DEV or leave empty">
+                </div>
+                <div class="form-group" id="remapTablespaceGroup" style="display:none;">
+                    <label>Remap Tablespace (source:target):</label>
+                    <input type="text" id="remapTablespace" placeholder="USERS:USERS2 or leave empty">
                 </div>
                 <button onclick="generateDirect()">Generate PL/SQL</button>
             </div>

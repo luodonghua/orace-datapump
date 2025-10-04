@@ -16,6 +16,9 @@ Convert your existing Data Pump commands to PL/SQL:
 ```bash
 expdp scott/tiger@orcl directory=DATA_PUMP_DIR dumpfile=scott.dmp schemas=scott
 ```
+- Exact parameter mapping from command line
+- No extra parameters added
+- Supports encryption, compression, and all standard parameters
 
 ### 2. Direct PL/SQL Generator
 Generate PL/SQL scripts by filling in a simple form with:
@@ -24,6 +27,11 @@ Generate PL/SQL scripts by filling in a simple form with:
 - Directory object
 - Dump file name
 - Object names
+- Parallel degree (default: 1)
+- Max file size (Export only, default: 100GB)
+- Remap schema (Import only)
+- Remap tablespace (Import only)
+- Enhanced with SCN, timestamps, and monitoring scripts
 
 ## 📖 Usage
 
@@ -47,16 +55,21 @@ Visit: [https://luodonghua.github.io/orace-datapump/](https://luodonghua.github.
 - `full` - Full database export
 - `parallel` - Parallel degree
 - `compression` - Compression type
+- `encryption` - Encryption type (ALL/DATA_ONLY/METADATA_ONLY/ENCRYPTED_COLUMNS_ONLY)
+- `encryption_password` - Encryption password
+- `encryption_algorithm` - Encryption algorithm (AES128/AES192/AES256)
+- `encryption_mode` - Encryption mode (DUAL/PASSWORD/TRANSPARENT)
 - `exclude` - Exclude objects
 - `include` - Include objects
 - `query` - Query filter
 - `content` - Content type (ALL/DATA_ONLY/METADATA_ONLY)
 - `filesize` - Maximum file size
+- `flashback_scn` - Flashback SCN (auto-generated in Direct Generator)
 
 ### Import (impdp) Parameters
 All export parameters plus:
-- `remap_schema` - Remap schema names
-- `remap_tablespace` - Remap tablespace names
+- `remap_schema` - Remap schema names (source:target)
+- `remap_tablespace` - Remap tablespace names (source:target)
 - `remap_table` - Remap table names
 - `table_exists_action` - Action when table exists (SKIP/APPEND/TRUNCATE/REPLACE)
 - `transform` - Metadata transformations
@@ -118,6 +131,23 @@ impdp scott/tiger directory=DATA_PUMP_DIR dumpfile=scott.dmp tables=scott.emp,sc
 - Chrome/Edge (latest)
 - Firefox (latest)
 - Safari (latest)
+
+## ✨ Key Differences
+
+### Command Line Converter
+- Converts exactly what you specify
+- No extra parameters added
+- Preserves your command line logic
+- Extracts schema from username if not specified
+
+### Direct Generator
+- Adds enhancements for best practices:
+  - Auto-generates unique job names with timestamp
+  - Sets FLASHBACK_SCN for consistent exports
+  - Creates timestamped log files
+  - Includes monitoring scripts
+  - Default parallel degree: 1
+  - Default max file size: 100GB
 
 ## 📚 References
 

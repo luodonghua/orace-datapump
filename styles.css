@@ -61,6 +61,7 @@ header p {
     background: white;
     border-bottom: 3px solid #667eea;
     font-weight: bold;
+    color: #333;
 }
 
 .tab-content {
@@ -80,6 +81,10 @@ label {
     display: block;
     margin-bottom: 10px;
     font-weight: bold;
+    color: #333;
+}
+
+.form-group label {
     color: #333;
 }
 
