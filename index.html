@@ -49,15 +49,26 @@
                 </div>
                 <div class="form-group">
                     <label>Directory Object:</label>
-                    <input type="text" id="directory" placeholder="DATA_PUMP_DIR">
+                    <input type="text" id="directory" value="DATA_PUMP_DIR">
                 </div>
                 <div class="form-group">
                     <label>Dump File:</label>
-                    <input type="text" id="dumpfile" placeholder="export.dmp">
+                    <input type="text" id="dumpfile" value="export.dmp">
+                    <label style="font-weight: normal; margin-top: 5px;">
+                        <input type="checkbox" id="useUniqueName"> Use Unique Name (%U) for parallel
+                    </label>
                 </div>
                 <div class="form-group">
                     <label>Schema/Table Names:</label>
                     <input type="text" id="objects" placeholder="SCOTT,HR or SCOTT.EMP,SCOTT.DEPT">
+                </div>
+                <div class="form-group">
+                    <label>Parallel Degree:</label>
+                    <input type="number" id="parallel" value="1" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Max File Size (GB):</label>
+                    <input type="number" id="filesize" value="100" min="1">
                 </div>
                 <button onclick="generateDirect()">Generate PL/SQL</button>
             </div>
@@ -65,8 +76,12 @@
 
         <div class="output-section">
             <h3>Generated PL/SQL Script:</h3>
-            <textarea id="output" readonly></textarea>
+            <pre id="output" class="sql-output"></pre>
             <button onclick="copyToClipboard()">Copy to Clipboard</button>
+            
+            <h3 style="margin-top: 30px;">How to Monitor the Job:</h3>
+            <pre id="monitor" class="sql-output"></pre>
+            <button onclick="copyMonitorToClipboard()">Copy Monitoring Script</button>
         </div>
     </div>
 

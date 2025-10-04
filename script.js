@@ -99,8 +99,11 @@ function convertCommand() {
     try {
         const params = parseCommand(cmdInput);
         const jobMode = determineJobMode(params);
-        const script = generatePLSQL(params.operation, jobMode, params);
-        document.getElementById('output').value = script;
+        if (!params.parallel) params.parallel = '1';
+        if (!params.filesize) params.filesize = '100';
+        const result = generatePLSQL(params.operation, jobMode, params);
+        document.getElementById('output').innerHTML = highlightSQL(result.script);
+        document.getElementById('monitor').innerHTML = highlightSQL(result.monitor);
     } catch (error) {
         alert('Error parsing command: ' + error.message);
     }
@@ -113,6 +116,9 @@ function generateDirect() {
     const directory = document.getElementById('directory').value;
     const dumpfile = document.getElementById('dumpfile').value;
     const objects = document.getElementById('objects').value;
+    const parallel = document.getElementById('parallel').value;
+    const filesize = document.getElementById('filesize').value;
+    const useUniqueName = document.getElementById('useUniqueName').checked;
     
     if (!directory || !dumpfile) {
         alert('Please fill in required fields: Directory and Dump File');
@@ -121,7 +127,10 @@ function generateDirect() {
     
     const params = {
         directory: directory,
-        dumpfile: dumpfile
+        dumpfile: dumpfile,
+        parallel: parallel,
+        filesize: filesize,
+        useUniqueName: useUniqueName
     };
     
     if (objects) {
@@ -134,20 +143,81 @@ function generateDirect() {
         }
     }
     
-    const script = generatePLSQL(operation, jobMode, params);
-    document.getElementById('output').value = script;
+    const result = generatePLSQL(operation, jobMode, params);
+    document.getElementById('output').innerHTML = highlightSQL(result.script);
+    document.getElementById('monitor').innerHTML = highlightSQL(result.monitor);
+}
+
+// Generate timestamp in Oracle format
+function getOracleTimestamp() {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    return `${yyyy}${mm}${dd}_${hh}${mi}${ss}`;
+}
+
+// Simple SQL syntax highlighter
+function highlightSQL(code) {
+    const keywords = ['DECLARE', 'BEGIN', 'END', 'IF', 'THEN', 'ELSE', 'ELSIF', 'LOOP', 'WHILE', 'FOR', 'WHEN', 'EXCEPTION', 'RAISE', 'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'IN', 'AS', 'IS', 'NULL', 'NOT', 'LIKE'];
+    const functions = ['DBMS_DATAPUMP', 'DBMS_OUTPUT', 'PUT_LINE', 'OPEN', 'ADD_FILE', 'METADATA_FILTER', 'METADATA_REMAP', 'SET_PARAMETER', 'SET_PARALLEL', 'START_JOB', 'DETACH', 'ATTACH', 'WAIT_FOR_JOB', 'STOP_JOB', 'GET_SCN', 'CURRENT_SCN', 'ROUND', 'SYSDATE', 'USER'];
+    const types = ['NUMBER', 'VARCHAR2', 'DATE', 'TIMESTAMP'];
+    
+    let highlighted = code
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    
+    // Comments
+    highlighted = highlighted.replace(/(--[^\n]*)/g, '<span class="sql-comment">$1</span>');
+    highlighted = highlighted.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="sql-comment">$1</span>');
+    
+    // Strings
+    highlighted = highlighted.replace(/('(?:[^']|'')*')/g, '<span class="sql-string">$1</span>');
+    
+    // Keywords
+    keywords.forEach(kw => {
+        const regex = new RegExp(`\\b(${kw})\\b`, 'gi');
+        highlighted = highlighted.replace(regex, '<span class="sql-keyword">$1</span>');
+    });
+    
+    // Functions
+    functions.forEach(fn => {
+        const regex = new RegExp(`\\b(${fn})\\b`, 'g');
+        highlighted = highlighted.replace(regex, '<span class="sql-function">$1</span>');
+    });
+    
+    // Types
+    types.forEach(tp => {
+        const regex = new RegExp(`\\b(${tp})\\b`, 'g');
+        highlighted = highlighted.replace(regex, '<span class="sql-type">$1</span>');
+    });
+    
+    // Numbers
+    highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="sql-number">$1</span>');
+    
+    return highlighted;
 }
 
 // Core PL/SQL generation function
 function generatePLSQL(operation, jobMode, params) {
-    const jobName = `${operation}_JOB_${Date.now()}`.substring(0, 30);
+    const timestamp = getOracleTimestamp();
+    const objectName = (params.schemas || params.tables?.split(',')[0]?.split('.')[0] || params.tablespaces || 'DB').replace(/[^A-Z0-9]/gi, '').substring(0, 10);
+    const jobName = `${operation}_${objectName}_${timestamp}`.substring(0, 30).toUpperCase();
     const handleVar = 'h1';
+    const scnVar = 'v_scn';
     
     let script = `DECLARE
   ${handleVar} NUMBER;
-  job_state VARCHAR2(30);
-  status ku\$_Status;
+  ${scnVar} NUMBER;
 BEGIN
+  -- Get current SCN for consistent export
+  SELECT CURRENT_SCN INTO ${scnVar} FROM V$DATABASE;
+  DBMS_OUTPUT.PUT_LINE('Using SCN: ' || ${scnVar});
+  
   -- Create Data Pump job
   ${handleVar} := DBMS_DATAPUMP.OPEN(
     operation => '${operation}',
@@ -159,7 +229,11 @@ BEGIN
 
     // Add file specifications
     if (params.dumpfile) {
-        const dumpfiles = params.dumpfile.split(',');
+        let dumpfile = params.dumpfile;
+        if (params.useUniqueName && !dumpfile.includes('%U')) {
+            dumpfile = dumpfile.replace('.dmp', '%U.dmp');
+        }
+        const dumpfiles = dumpfile.split(',');
         dumpfiles.forEach(file => {
             script += `  -- Add dump file\n`;
             script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
@@ -171,8 +245,9 @@ BEGIN
         });
     }
     
-    // Add log file
-    const logfile = params.logfile || params.dumpfile?.replace('.dmp', '.log') || 'datapump.log';
+    // Add log file with timestamp
+    const baseLogName = (params.logfile || params.dumpfile?.replace('.dmp', '') || 'datapump').replace('.log', '');
+    const logfile = `${baseLogName}_${timestamp}.log`;
     script += `  -- Add log file\n`;
     script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
     script += `    handle    => ${handleVar},\n`;
@@ -252,12 +327,32 @@ BEGIN
         });
     }
     
-    // Add parallel
-    if (params.parallel) {
-        script += `  -- Set parallel degree\n`;
-        script += `  DBMS_DATAPUMP.SET_PARALLEL(\n`;
+    // Add parallel (always set, default 1)
+    const parallelDegree = params.parallel || '1';
+    script += `  -- Set parallel degree\n`;
+    script += `  DBMS_DATAPUMP.SET_PARALLEL(\n`;
+    script += `    handle => ${handleVar},\n`;
+    script += `    degree => ${parallelDegree}\n`;
+    script += `  );\n\n`;
+    
+    // Add FLASHBACK_SCN for export
+    if (operation === 'EXPORT') {
+        script += `  -- Set flashback SCN for consistent export\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
         script += `    handle => ${handleVar},\n`;
-        script += `    degree => ${params.parallel}\n`;
+        script += `    name   => 'FLASHBACK_SCN',\n`;
+        script += `    value  => TO_CHAR(${scnVar})\n`;
+        script += `  );\n\n`;
+    }
+    
+    // Add filesize for export
+    if (operation === 'EXPORT' && params.filesize) {
+        const filesizeBytes = parseInt(params.filesize) * 1024 * 1024 * 1024; // Convert GB to bytes
+        script += `  -- Set maximum file size\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'FILESIZE',\n`;
+        script += `    value  => '${filesizeBytes}'\n`;
         script += `  );\n\n`;
     }
     
@@ -328,11 +423,17 @@ BEGIN
     script += `  -- Start the Data Pump job\n`;
     script += `  DBMS_DATAPUMP.START_JOB(handle => ${handleVar});\n\n`;
     
-    // Monitor job progress
-    script += `  -- Monitor job until completion\n`;
-    script += `  DBMS_DATAPUMP.WAIT_FOR_JOB(handle => ${handleVar}, job_state => job_state);\n\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('========================================');\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('Job Name: ${jobName}');\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('SCN: ' || ${scnVar});\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('Log File: ${logfile}');\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('Job started successfully');\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('Use monitoring script to check progress');\n`;
+    script += `  DBMS_OUTPUT.PUT_LINE('========================================');\n\n`;
     
-    script += `  DBMS_OUTPUT.PUT_LINE('Job completed with status: ' || job_state);\n\n`;
+    // Detach from job
+    script += `  -- Detach from job (job continues in background)\n`;
+    script += `  DBMS_DATAPUMP.DETACH(handle => ${handleVar});\n\n`;
     
     // Exception handling
     script += `EXCEPTION\n`;
@@ -345,19 +446,81 @@ BEGIN
     script += `END;\n`;
     script += `/`;
     
-    return script;
+    // Generate monitoring script
+    const monitorScript = generateMonitorScript(jobName);
+    
+    return { script, monitor: monitorScript };
+}
+
+// Generate monitoring script
+function generateMonitorScript(jobName) {
+    return `-- Monitor Data Pump Job: ${jobName}
+
+-- Check job status
+SELECT owner_name, job_name, operation, job_mode, state, 
+       degree, attached_sessions
+FROM dba_datapump_jobs
+WHERE job_name = '${jobName}';
+
+-- Check job progress
+SELECT username, opname, target_desc,
+       sofar, totalwork,
+       ROUND(sofar/totalwork*100, 2) AS percent_done,
+       start_time, 
+       ROUND((SYSDATE - start_time) * 24 * 60, 2) AS elapsed_min,
+       ROUND(time_remaining/60, 2) AS remaining_min
+FROM v$session_longops
+WHERE opname LIKE 'DATAPUMP%'
+  AND sofar <> totalwork;
+
+-- Attach to job and wait for completion (if needed)
+DECLARE
+  h1 NUMBER;
+  job_state VARCHAR2(30);
+BEGIN
+  h1 := DBMS_DATAPUMP.ATTACH('${jobName}', USER);
+  DBMS_DATAPUMP.WAIT_FOR_JOB(h1, job_state);
+  DBMS_OUTPUT.PUT_LINE('Job completed with status: ' || job_state);
+  DBMS_DATAPUMP.DETACH(h1);
+END;
+/
+
+-- Stop job (if needed)
+/*
+DECLARE
+  h1 NUMBER;
+BEGIN
+  h1 := DBMS_DATAPUMP.ATTACH('${jobName}', USER);
+  DBMS_DATAPUMP.STOP_JOB(h1, 1, 0);
+END;
+/
+*/`;
 }
 
 // Copy to clipboard functionality
 function copyToClipboard() {
     const output = document.getElementById('output');
-    output.select();
-    document.execCommand('copy');
-    
-    const btn = event.target;
-    const originalText = btn.textContent;
-    btn.textContent = 'Copied!';
-    setTimeout(() => {
-        btn.textContent = originalText;
-    }, 2000);
+    const text = output.innerText || output.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+            btn.textContent = originalText;
+        }, 2000);
+    });
+}
+
+// Copy monitoring script to clipboard
+function copyMonitorToClipboard() {
+    const monitor = document.getElementById('monitor');
+    const text = monitor.innerText || monitor.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+            btn.textContent = originalText;
+        }, 2000);
+    });
 }
