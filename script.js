@@ -509,6 +509,16 @@ BEGIN`;
         script += `  );\n\n`;
     }
     
+    // Add network_link for network import
+    if (params.network_link) {
+        script += `  -- Set network link\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'NETWORK_LINK',\n`;
+        script += `    value  => '${params.network_link.toUpperCase()}'\n`;
+        script += `  );\n\n`;
+    }
+    
     // Start the job
     script += `  -- Start the Data Pump job\n`;
     script += `  DBMS_DATAPUMP.START_JOB(handle => ${handleVar});\n\n`;
