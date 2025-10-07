@@ -36,7 +36,7 @@ Generate PL/SQL scripts by filling in a simple form with:
 ## 📖 Usage
 
 ### Online Tool
-Visit: [https://luodonghua.github.io/orace-datapump/](https://luodonghua.github.io/orace-datapump/)
+Visit: [https://luodonghua.github.io/oracle-datapump/](https://luodonghua.github.io/oracle-datapump/)
 
 ### Local Usage
 1. Clone this repository
