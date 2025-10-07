@@ -243,7 +243,12 @@ function highlightSQL(code) {
 function generatePLSQL(operation, jobMode, params) {
     const timestamp = getOracleTimestamp();
     const fromCmdLine = params.fromCommandLine;
-    const objectName = (params.schemas || params.tables?.split(',')[0]?.split('.')[0] || params.tablespaces || 'DB').replace(/[^A-Z0-9]/gi, '').substring(0, 10);
+    let objectName = (params.schemas || params.tables?.split(',')[0]?.split('.')[0] || params.tablespaces || 'DB');
+    // For multiple schemas/tables, use first one only
+    if (objectName.includes(',')) {
+        objectName = objectName.split(',')[0].trim();
+    }
+    objectName = objectName.replace(/[^A-Z0-9]/gi, '').substring(0, 10);
     const jobName = params.job_name || `${operation}_${objectName}_${timestamp}`.substring(0, 30).toUpperCase();
     const handleVar = 'h1';
     const scnVar = 'v_scn';
@@ -293,59 +298,56 @@ BEGIN`;
             script += `    handle    => ${handleVar},\n`;
             script += `    filename  => '${file.trim()}',\n`;
             script += `    directory => '${params.directory || 'DATA_PUMP_DIR'}',\n`;
-            script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_DUMP_FILE\n`;
-            script += `  );\n\n`;
+            script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_DUMP_FILE`;
+            if (operation === 'EXPORT' && params.filesize) {
+                script += `,\n    filesize  => '${parseInt(params.filesize)}G'`;
+            }
+            script += `\n  );\n\n`;
         });
     }
     
-    // Add log file
-    if (params.logfile || !fromCmdLine) {
-        const baseLogName = (params.logfile || params.dumpfile?.replace('.dmp', '') || 'datapump').replace('.log', '');
-        const logfile = fromCmdLine && params.logfile ? params.logfile : `${baseLogName}_${timestamp}.log`;
-        script += `  -- Add log file\n`;
-        script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
-        script += `    handle    => ${handleVar},\n`;
-        script += `    filename  => '${logfile}',\n`;
-        script += `    directory => '${params.directory || 'DATA_PUMP_DIR'}',\n`;
-        script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_LOG_FILE\n`;
-        script += `  );\n\n`;
-    }
+    // Add log file - always add for direct generator, only if specified for command line
+    const logfile = params.logfile || `${jobName}.log`;
+    script += `  -- Add log file\n`;
+    script += `  DBMS_DATAPUMP.ADD_FILE(\n`;
+    script += `    handle    => ${handleVar},\n`;
+    script += `    filename  => '${logfile}',\n`;
+    script += `    directory => '${params.directory || 'DATA_PUMP_DIR'}',\n`;
+    script += `    filetype  => DBMS_DATAPUMP.KU\$_FILE_TYPE_LOG_FILE\n`;
+    script += `  );\n\n`;
     
     // Add metadata filters based on job mode
     if (jobMode === 'SCHEMA' && params.schemas) {
-        const schemas = params.schemas.split(',');
-        schemas.forEach(schema => {
-            script += `  -- Filter for schema\n`;
-            script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
-            script += `    handle => ${handleVar},\n`;
-            script += `    name   => 'SCHEMA_EXPR',\n`;
-            script += `    value  => 'IN (''${schema.trim().toUpperCase()}'')'\n`;
-            script += `  );\n\n`;
-        });
+        const schemas = params.schemas.split(',').map(s => s.trim().toUpperCase());
+        const schemaList = schemas.map(s => `''${s}''`).join(',');
+        script += `  -- Filter for schema\n`;
+        script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'SCHEMA_EXPR',\n`;
+        script += `    value  => 'IN (${schemaList})'\n`;
+        script += `  );\n\n`;
     }
     
     if (jobMode === 'TABLE' && params.tables) {
-        const tables = params.tables.split(',');
-        tables.forEach(table => {
-            script += `  -- Filter for table\n`;
-            script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
-            script += `    handle => ${handleVar},\n`;
-            script += `    name   => 'NAME_EXPR',\n`;
-            script += `    value  => 'IN (''${table.trim().toUpperCase()}'')'\n`;
-            script += `  );\n\n`;
-        });
+        const tables = params.tables.split(',').map(t => t.trim().toUpperCase());
+        const tableList = tables.map(t => `''${t}''`).join(',');
+        script += `  -- Filter for table\n`;
+        script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'NAME_EXPR',\n`;
+        script += `    value  => 'IN (${tableList})'\n`;
+        script += `  );\n\n`;
     }
     
     if (jobMode === 'TABLESPACE' && params.tablespaces) {
-        const tablespaces = params.tablespaces.split(',');
-        tablespaces.forEach(ts => {
-            script += `  -- Filter for tablespace\n`;
-            script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
-            script += `    handle => ${handleVar},\n`;
-            script += `    name   => 'TABLESPACE_EXPR',\n`;
-            script += `    value  => 'IN (''${ts.trim().toUpperCase()}'')'\n`;
-            script += `  );\n\n`;
-        });
+        const tablespaces = params.tablespaces.split(',').map(ts => ts.trim().toUpperCase());
+        const tsList = tablespaces.map(ts => `''''${ts}''''`).join(',');
+        script += `  -- Filter for tablespace\n`;
+        script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'TABLESPACE_EXPR',\n`;
+        script += `    value  => 'IN (${tsList})'\n`;
+        script += `  );\n\n`;
     }
     
     // Add exclude filters
@@ -394,28 +396,46 @@ BEGIN`;
         }
     }
     
+    // Add best practice parameters for direct generator
+    if (!fromCmdLine) {
+        // Exclude statistics for export
+        if (operation === 'EXPORT') {
+            script += `  -- Exclude statistics (best practice)\n`;
+            script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
+            script += `    handle => ${handleVar},\n`;
+            script += `    name   => 'EXCLUDE_PATH_EXPR',\n`;
+            script += `    value  => 'IN (''STATISTICS'')'\n`;
+            script += `  );\n\n`;
+        }
+        
+        // Add LOGTIME for both export and import
+        script += `  -- Enable timestamps in log (best practice)\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'LOGTIME',\n`;
+        script += `    value  => 'ALL'\n`;
+        script += `  );\n\n`;
+        
+        // Add METRICS for both export and import
+        script += `  -- Enable metrics (best practice)\n`;
+        script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
+        script += `    handle => ${handleVar},\n`;
+        script += `    name   => 'METRICS',\n`;
+        script += `    value  => 1\n`;
+        script += `  );\n\n`;
+    }
+    
     // Add FLASHBACK_SCN for export - only if not from command line or no encryption
     if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
         script += `  -- Set flashback SCN for consistent export\n`;
         script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
         script += `    handle => ${handleVar},\n`;
         script += `    name   => 'FLASHBACK_SCN',\n`;
-        script += `    value  => TO_CHAR(${scnVar})\n`;
+        script += `    value  => ${scnVar}\n`;
         script += `  );\n\n`;
     }
     
-    // Add filesize - only if specified in command line or from direct generator
-    if (operation === 'EXPORT' && params.filesize && (fromCmdLine || !fromCmdLine)) {
-        if (fromCmdLine && params.filesize || !fromCmdLine) {
-            const filesizeBytes = parseInt(params.filesize) * 1024 * 1024 * 1024;
-            script += `  -- Set maximum file size\n`;
-            script += `  DBMS_DATAPUMP.SET_PARAMETER(\n`;
-            script += `    handle => ${handleVar},\n`;
-            script += `    name   => 'FILESIZE',\n`;
-            script += `    value  => '${filesizeBytes}'\n`;
-            script += `  );\n\n`;
-        }
-    }
+
     
     // Add encryption parameters if specified
     if (params.encryption) {
@@ -531,17 +551,17 @@ BEGIN`;
     if (operation === 'EXPORT' && !fromCmdLine && params.isRdsOracle) {
         script += `  -- Exclude RDS Oracle system objects\n`;
         script += `  DBMS_DATAPUMP.METADATA_FILTER(\n`;
-        script += `    handle => ${handleVar},\n`;
-        script += `    name   => 'EXCLUDE_NAME_EXPR',\n`;
-        script += `    value  => q'[IN (SELECT NAME FROM SYS.OBJ$ \n`;
-        script += `               WHERE TYPE# IN (66,67,74,79,59,62,46) \n`;
-        script += `               AND OWNER# IN \n`;
-        script += `                 (SELECT USER# FROM SYS.USER$ \n`;
-        script += `                  WHERE NAME IN ('RDSADMIN','SYS','SYSTEM','RDS_DATAGUARD','RDSSEC')\n`;
-        script += `                 )\n`;
-        script += `              )\n`;
+        script += `    ${handleVar},\n`;
+        script += `    'EXCLUDE_NAME_EXPR',\n`;
+        script += `    q'[IN (SELECT NAME FROM SYS.OBJ$ \n`;
+        script += `           WHERE TYPE# IN (66,67,74,79,59,62,46) \n`;
+        script += `           AND OWNER# IN \n`;
+        script += `             (SELECT USER# FROM SYS.USER$ \n`;
+        script += `              WHERE NAME IN ('RDSADMIN','SYS','SYSTEM','RDS_DATAGUARD','RDSSEC')\n`;
+        script += `             )\n`;
+        script += `          )\n`;
         script += `    ]',\n`;
-        script += `    object_path => 'PROCOBJ'\n`;
+        script += `    'PROCOBJ'\n`;
         script += `  );\n\n`;
     }
     
@@ -574,7 +594,7 @@ BEGIN`;
     script += `  -- Start the Data Pump job\n`;
     script += `  DBMS_DATAPUMP.START_JOB(handle => ${handleVar});\n\n`;
     
-    const logfileForOutput = params.logfile || (params.dumpfile ? `${params.dumpfile.replace('.dmp', '')}_${timestamp}.log` : `datapump_${timestamp}.log`);
+    const logfileForOutput = params.logfile || `${jobName}.log`;
     script += `  DBMS_OUTPUT.PUT_LINE('========================================');\n`;
     script += `  DBMS_OUTPUT.PUT_LINE('Job Name: ${jobName}');\n`;
     if (operation === 'EXPORT' && (!fromCmdLine || !params.encryption)) {
@@ -601,13 +621,14 @@ BEGIN`;
     script += `/`;
     
     // Generate monitoring script
-    const monitorScript = generateMonitorScript(jobName);
+    const monitorScript = generateMonitorScript(jobName, operation);
     
     return { script, monitor: monitorScript };
 }
 
 // Generate monitoring script
-function generateMonitorScript(jobName) {
+function generateMonitorScript(jobName, operation) {
+    const opnameFilter = operation === 'EXPORT' ? 'EXPORT%' : 'IMPORT%';
     return `-- Monitor Data Pump Job: ${jobName}
 
 -- Check job status
@@ -624,7 +645,7 @@ SELECT username, opname, target_desc,
        ROUND((SYSDATE - start_time) * 24 * 60, 2) AS elapsed_min,
        ROUND(time_remaining/60, 2) AS remaining_min
 FROM v$session_longops
-WHERE opname LIKE 'DATAPUMP%'
+WHERE opname LIKE '${opnameFilter}'
   AND sofar <> totalwork;
 
 -- Attach to job and wait for completion (if needed)
